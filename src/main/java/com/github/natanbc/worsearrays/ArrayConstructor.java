@@ -9,27 +9,34 @@ import static org.objectweb.asm.Opcodes.*;
 
 class ArrayConstructor {
     @SuppressWarnings("unchecked")
-    static <T> Array<T> create(int size) {
+    static <T> T create(int size, Class fieldType, Class interfaceType) {
         try {
-            return ArrayConstructor.<T>classFor(size).newInstance();
+            if (size < 0) {
+                throw new NegativeArraySizeException("size < 0");
+            }
+            return (T) ArrayConstructor.classFor(size, fieldType, interfaceType).newInstance();
         } catch(Exception e) {
             throw new AssertionError(e);
         }
     }
 
     @SuppressWarnings("unchecked")
-    private static <T> Class<Array<T>> classFor(int size) {
-        String resultName = size + "SizedArray";
+    private static Class classFor(int size, Class fieldType, Class interfaceType) {
+        String resultName = size + fieldType.getSimpleName() + "SizedArray";
         try {
-            return (Class<Array<T>>)Definer.INSTANCE.loadClass(resultName);
+            return Definer.INSTANCE.loadClass(resultName);
         } catch(ClassNotFoundException e) {
+            Type type = Type.getType(fieldType);
+
             ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS);
             String internalName = resultName.replace('.', '/');
             cw.visit(V1_8, ACC_PUBLIC | ACC_FINAL, internalName, null, "java/lang/Object", new String[]{
-                    Array.class.getName().replace('.', '/')
+                    Type.getInternalName(interfaceType)
             });
+
+            String fieldDescriptor = Type.getDescriptor(fieldType);
             for(int i = 0; i < size; i++) {
-                cw.visitField(ACC_PRIVATE, String.valueOf(i), "Ljava/lang/Object;", null, null);
+                cw.visitField(ACC_PRIVATE, String.valueOf(i), fieldDescriptor, null, null);
             }
             MethodVisitor mv;
 
@@ -53,7 +60,7 @@ class ArrayConstructor {
             }
 
             label: {
-                mv = cw.visitMethod(ACC_PUBLIC, "get", "(I)Ljava/lang/Object;", null, null);
+                mv = cw.visitMethod(ACC_PUBLIC, "get", "(I)" + fieldDescriptor, null, null);
                 mv.visitCode();
                 if(size == 0) {
                     throwOOB(mv);
@@ -72,19 +79,19 @@ class ArrayConstructor {
                 for(int i = 0; i < size; i++) {
                     mv.visitLabel(labels[i]);
                     mv.visitVarInsn(ALOAD, 0);
-                    mv.visitFieldInsn(GETFIELD, internalName, String.valueOf(i), "Ljava/lang/Object;");
+                    mv.visitFieldInsn(GETFIELD, internalName, String.valueOf(i), fieldDescriptor);
                     mv.visitJumpInsn(GOTO, ret);
                 }
                 mv.visitLabel(dflt);
                 throwOOB(mv);
                 mv.visitLabel(ret);
-                mv.visitInsn(ARETURN);
+                mv.visitInsn(type.getOpcode(IRETURN));
                 mv.visitMaxs(0, 0);
                 mv.visitEnd();
             }
 
             label: {
-                mv = cw.visitMethod(ACC_PUBLIC, "set", "(ILjava/lang/Object;)V", null, null);
+                mv = cw.visitMethod(ACC_PUBLIC, "set", "(I" + fieldDescriptor + ")V", null, null);
                 mv.visitCode();
                 if(size == 0) {
                     throwOOB(mv);
@@ -103,8 +110,8 @@ class ArrayConstructor {
                 for(int i = 0; i < size; i++) {
                     mv.visitLabel(labels[i]);
                     mv.visitVarInsn(ALOAD, 0);
-                    mv.visitVarInsn(ALOAD, 2);
-                    mv.visitFieldInsn(PUTFIELD, internalName, String.valueOf(i), "Ljava/lang/Object;");
+                    mv.visitVarInsn(type.getOpcode(ILOAD), 2);
+                    mv.visitFieldInsn(PUTFIELD, internalName, String.valueOf(i), fieldDescriptor);
                     mv.visitJumpInsn(GOTO, ret);
                 }
                 mv.visitLabel(dflt);
@@ -115,7 +122,7 @@ class ArrayConstructor {
                 mv.visitEnd();
             }
 
-            return (Class<Array<T>>)Definer.define(cw.toByteArray());
+            return Definer.define(cw.toByteArray());
         }
     }
 
